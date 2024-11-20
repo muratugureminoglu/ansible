@@ -1,0 +1,89 @@
+---
+- name: Deploy WAR to Tomcat
+  hosts: tomcat_app_servers
+  become: yes
+  vars:
+    war_file: "{{ war_file | default('war-file.war') }}"
+    tomcat_webapps: "/var/lib/tomcat9/webapps"
+    tomcat_service: "tomcat9"
+    backup_dir: "/backup/wars"
+    source_dir: "/root/deploy-war"
+
+  tasks:
+    - name: Create backup directory if not exists
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Backup existing WAR file
+      copy:
+        src: "{{ tomcat_webapps }}/{{ war_file }}"
+        dest: "{{ backup_dir }}/{{ war_file }}.{{ ansible_date_time.iso8601 }}"
+        remote_src: yes
+      ignore_errors: yes
+
+    - name: Stop Tomcat service
+      service:
+        name: "{{ tomcat_service }}"
+        state: stopped
+
+    - name: Remove old WAR and unpacked directory
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - "{{ tomcat_webapps }}/{{ war_file }}"
+        - "{{ tomcat_webapps }}/{{ war_file | regex_replace('\\.war$', '') }}"
+
+    - name: Copy WAR file to Tomcat webapps
+      copy:
+        src: "{{ source_dir }}/{{ war_file }}"
+        dest: "{{ tomcat_webapps }}/{{ war_file }}"
+          #    remote_src: yes
+        owner: tomcat
+        group: tomcat
+        mode: '0644'
+
+    - name: Ensure War file exists
+      file:
+        path: "{{ tomcat_webapps }}/{{ war_file }}"
+        state: file
+        owner: tomcat
+        group: tomcat
+        mode: '0755'
+
+    - name: Start Tomcat service
+      service:
+        name: "{{ tomcat_service }}"
+        state: started
+
+    - name: Wait for application to start
+      ansible.builtin.uri:
+        url: "http://localhost:8080/{{ war_file | regex_replace('\\.war$', '') }}"
+        method: GET
+        status_code: 200
+      register: http_result
+      check_mode: no
+      until: http_result.status == 200
+      retries: 10
+      delay: 5
+      ignore_errors: yes
+
+    - name: Copy .jar to directory
+      copy:
+        src: "/root/deploy-war/EApp.jar"
+        dest: "{{ tomcat_webapps }}/app/EApp.jar"
+          #   remote_src: yes
+        owner: tomcat
+        group: tomcat
+        mode: '0644'
+
+    - name: Copy mmo-eimza.jnlp to directory
+      copy:
+        src: "/root/deploy-war/eimza.jnlp"
+        dest: "{{ tomcat_webapps }}/app/eimza.jnlp"
+          #  remote_src: yes
+        owner: tomcat
+        group: tomcat
+        mode: '0644'
